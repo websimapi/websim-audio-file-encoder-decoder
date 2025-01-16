@@ -21,8 +21,8 @@ class App {
     const file = event.target.files[0];
     if (!file) return;
 
-    if (file.size > 1024 * 1024 * 10) { // 10MB limit
-      this.ui.setStatus('File too large. Please choose a file under 10MB.', true);
+    if (file.size > 1024 * 1024 * 5) { // 5MB limit
+      this.ui.setStatus('File too large. Please choose a file under 5MB.', true);
       this.ui.fileInput.value = '';
       return;
     }
@@ -34,24 +34,33 @@ class App {
   async handleEncode() {
     try {
       const file = this.ui.fileInput.files[0];
-      this.ui.setStatus('Encoding file...');
+      this.ui.setStatus('Processing file...');
+      this.ui.updateProgress(10);
       
-      const binary = await this.audioProcessor.fileToBinary(file);
-      this.ui.updateProgress(30);
-      
-      const audioBuffer = await this.audioProcessor.binaryToAudio(binary);
-      this.ui.updateProgress(60);
-      
-      this.visualizer.start();
-      await this.audioProcessor.playAudio(audioBuffer, this.visualizer.analyser);
-      this.ui.updateProgress(100);
-      
-      this.ui.setStatus('File encoded and played!');
-      this.ui.decodeButton.disabled = false;
+      // Wrap in setTimeout to allow UI to update
+      setTimeout(async () => {
+        try {
+          const binary = await this.audioProcessor.fileToBinary(file);
+          this.ui.updateProgress(30);
+          
+          const audioBuffer = await this.audioProcessor.binaryToAudio(binary);
+          this.ui.updateProgress(60);
+          
+          this.visualizer.start();
+          await this.audioProcessor.playAudio(audioBuffer, this.visualizer.analyser);
+          this.ui.updateProgress(100);
+          
+          this.ui.setStatus('File encoded and played!');
+          this.ui.decodeButton.disabled = false;
+        } catch (error) {
+          console.error('Encoding error:', error);
+          this.ui.setStatus(`Error: ${error.message}`, true);
+          this.visualizer.stop();
+        }
+      }, 100);
     } catch (error) {
-      console.error('Encoding error:', error);
+      console.error('File processing error:', error);
       this.ui.setStatus(`Error: ${error.message}`, true);
-      this.visualizer.stop();
     }
   }
 
