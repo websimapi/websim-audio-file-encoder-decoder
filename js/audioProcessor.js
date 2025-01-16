@@ -5,6 +5,7 @@ export class AudioProcessor {
     this.freq0 = 400;
     this.freq1 = 800;
     this.bitDuration = 0.1;
+    this.chunkSize = 1000; // Process 1000 bits at a time
   }
 
   async fileToBinary(file) {
@@ -16,14 +17,38 @@ export class AudioProcessor {
   }
 
   async binaryToAudio(binary) {
+    // Split binary into chunks
+    const chunks = [];
+    for (let i = 0; i < binary.length; i += this.chunkSize) {
+      chunks.push(binary.slice(i, i + this.chunkSize));
+    }
+
+    // Process each chunk
+    const buffers = await Promise.all(chunks.map(chunk => this.createChunkBuffer(chunk)));
+    
+    // Concatenate all buffers
+    const totalLength = buffers.reduce((sum, buffer) => sum + buffer.length, 0);
+    const finalBuffer = this.context.createBuffer(1, totalLength, this.sampleRate);
+    const channelData = finalBuffer.getChannelData(0);
+    
+    let offset = 0;
+    buffers.forEach(buffer => {
+      channelData.set(buffer.getChannelData(0), offset);
+      offset += buffer.length;
+    });
+
+    return finalBuffer;
+  }
+
+  createChunkBuffer(binaryChunk) {
     const buffer = this.context.createBuffer(
-      1, 
-      binary.length * this.sampleRate * this.bitDuration, 
+      1,
+      binaryChunk.length * this.sampleRate * this.bitDuration,
       this.sampleRate
     );
     const channelData = buffer.getChannelData(0);
 
-    binary.split('').forEach((bit, index) => {
+    binaryChunk.split('').forEach((bit, index) => {
       const freq = bit === '1' ? this.freq1 : this.freq0;
       const start = index * this.sampleRate * this.bitDuration;
       

@@ -21,6 +21,12 @@ class App {
     const file = event.target.files[0];
     if (!file) return;
 
+    if (file.size > 1024 * 1024 * 10) { // 10MB limit
+      this.ui.setStatus('File too large. Please choose a file under 10MB.', true);
+      this.ui.fileInput.value = '';
+      return;
+    }
+
     this.ui.updateFileDetails(file);
     this.ui.encodeButton.disabled = false;
   }
@@ -43,7 +49,9 @@ class App {
       this.ui.setStatus('File encoded and played!');
       this.ui.decodeButton.disabled = false;
     } catch (error) {
+      console.error('Encoding error:', error);
       this.ui.setStatus(`Error: ${error.message}`, true);
+      this.visualizer.stop();
     }
   }
 
