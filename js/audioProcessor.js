@@ -5,45 +5,54 @@ export class AudioProcessor {
     this.freq0 = 400;
     this.freq1 = 800;
     this.bitDuration = 0.1;
-    // Reduce chunk size for better memory management
-    this.chunkSize = 256; // Process smaller chunks
-    this.maxFileSize = 1024 * 1024 * 5; // 5MB limit
+    // Significantly reduce chunk size for better memory management
+    this.chunkSize = 128; // Process in very small chunks
+    this.maxFileSize = 1024 * 1024 * 50; // Increase to 50MB limit
+    this.processingChunkSize = 1024; // Size of audio processing chunks
   }
 
   async fileToBinary(file) {
     if (file.size > this.maxFileSize) {
-      throw new Error('File too large. Please choose a file under 5MB.');
+      throw new Error('File too large. Please choose a file under 50MB.');
     }
     
-    const arrayBuffer = await file.arrayBuffer();
-    const uint8Array = new Uint8Array(arrayBuffer);
-    return Array.from(uint8Array)
-      .map(byte => byte.toString(2).padStart(8, '0'))
-      .join('');
+    // Process file in chunks
+    const chunks = [];
+    const chunkSize = 1024 * 1024; // 1MB chunks
+    let offset = 0;
+    
+    while (offset < file.size) {
+      const chunk = file.slice(offset, offset + chunkSize);
+      const arrayBuffer = await chunk.arrayBuffer();
+      const uint8Array = new Uint8Array(arrayBuffer);
+      chunks.push(Array.from(uint8Array)
+        .map(byte => byte.toString(2).padStart(8, '0'))
+        .join(''));
+      offset += chunkSize;
+    }
+    
+    return chunks.join('');
   }
 
   async binaryToAudio(binary) {
-    // Calculate total length and validate
-    const totalSamples = Math.ceil(binary.length * this.sampleRate * this.bitDuration);
-    if (totalSamples > this.sampleRate * 60) { // Max 60 seconds
-      throw new Error('Data too large to encode. Try a smaller file.');
-    }
-
-    // Split binary into smaller chunks
-    const chunks = [];
-    for (let i = 0; i < binary.length; i += this.chunkSize) {
-      chunks.push(binary.slice(i, i + this.chunkSize));
-    }
-
-    // Process chunks with delay to prevent UI blocking
-    const buffers = await this.processChunksWithDelay(chunks);
+    // Split into manageable chunks
+    const chunkDuration = 5; // 5 seconds per chunk
+    const samplesPerChunk = this.sampleRate * chunkDuration;
+    const bitsPerChunk = Math.floor(samplesPerChunk / (this.sampleRate * this.bitDuration));
     
-    // Concatenate buffers
-    const finalBuffer = this.context.createBuffer(
-      1,
-      totalSamples,
-      this.sampleRate
+    const chunks = [];
+    for (let i = 0; i < binary.length; i += bitsPerChunk) {
+      chunks.push(binary.slice(i, i + bitsPerChunk));
+    }
+
+    // Create buffers for each chunk
+    const buffers = await Promise.all(
+      chunks.map(chunk => this.createChunkBuffer(chunk))
     );
+
+    // Concatenate all buffers
+    const totalSamples = buffers.reduce((sum, buf) => sum + buf.length, 0);
+    const finalBuffer = this.context.createBuffer(1, totalSamples, this.sampleRate);
     const channelData = finalBuffer.getChannelData(0);
     
     let offset = 0;
@@ -53,6 +62,28 @@ export class AudioProcessor {
     });
 
     return finalBuffer;
+  }
+
+  createChunkBuffer(binaryChunk) {
+    const samplesPerBit = Math.ceil(this.sampleRate * this.bitDuration);
+    const bufferLength = binaryChunk.length * samplesPerBit;
+    
+    const buffer = this.context.createBuffer(1, bufferLength, this.sampleRate);
+    const channelData = buffer.getChannelData(0);
+
+    for (let i = 0; i < binaryChunk.length; i++) {
+      const bit = binaryChunk[i];
+      const freq = bit === '1' ? this.freq1 : this.freq0;
+      const start = i * samplesPerBit;
+      
+      for (let j = 0; j < samplesPerBit; j++) {
+        // Improved fade in/out with smoother transition
+        const fade = 0.5 - Math.cos(Math.PI * j / samplesPerBit) / 2;
+        channelData[start + j] = Math.sin(2 * Math.PI * freq * (j / this.sampleRate)) * fade;
+      }
+    }
+
+    return buffer;
   }
 
   async processChunksWithDelay(chunks) {
@@ -65,29 +96,6 @@ export class AudioProcessor {
       buffers.push(await this.createChunkBuffer(chunks[i]));
     }
     return buffers;
-  }
-
-  createChunkBuffer(binaryChunk) {
-    const samplesPerBit = Math.ceil(this.sampleRate * this.bitDuration);
-    const buffer = this.context.createBuffer(
-      1,
-      binaryChunk.length * samplesPerBit,
-      this.sampleRate
-    );
-    const channelData = buffer.getChannelData(0);
-
-    binaryChunk.split('').forEach((bit, index) => {
-      const freq = bit === '1' ? this.freq1 : this.freq0;
-      const start = index * samplesPerBit;
-      
-      for (let i = 0; i < samplesPerBit; i++) {
-        // Apply fade in/out to reduce clicking
-        const fade = Math.min(i, samplesPerBit - i, samplesPerBit * 0.1) / (samplesPerBit * 0.1);
-        channelData[start + i] = Math.sin(2 * Math.PI * freq * (i / this.sampleRate)) * fade;
-      }
-    });
-
-    return buffer;
   }
 
   async playAudio(buffer, analyserNode) {

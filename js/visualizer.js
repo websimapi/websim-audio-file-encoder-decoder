@@ -6,6 +6,11 @@ export class Visualizer {
     this.isActive = false;
     
     this.setupCanvas();
+    
+    // Add performance optimizations
+    this.animationFrame = null;
+    this.lastDrawTime = 0;
+    this.minDrawInterval = 1000 / 30; // Cap at 30 FPS
   }
 
   setupCanvas() {
@@ -23,35 +28,50 @@ export class Visualizer {
     if (!this.analyser) {
       const audioContext = new (window.AudioContext || window.webkitAudioContext)();
       this.analyser = audioContext.createAnalyser();
-      this.analyser.fftSize = 2048;
+      this.analyser.fftSize = 1024; // Reduced for better performance
     }
     
     this.isActive = true;
-    this.draw();
+    this.lastDrawTime = performance.now();
+    this.draw(this.lastDrawTime);
   }
 
   stop() {
     this.isActive = false;
+    if (this.animationFrame) {
+      cancelAnimationFrame(this.animationFrame);
+    }
   }
 
-  draw() {
+  draw(timestamp) {
     if (!this.isActive) return;
+    
+    // Limit frame rate for better performance
+    const elapsed = timestamp - this.lastDrawTime;
+    if (elapsed < this.minDrawInterval) {
+      this.animationFrame = requestAnimationFrame((t) => this.draw(t));
+      return;
+    }
+    
+    this.lastDrawTime = timestamp;
 
     const bufferLength = this.analyser.frequencyBinCount;
     const dataArray = new Uint8Array(bufferLength);
     this.analyser.getByteTimeDomainData(dataArray);
 
+    // Clear with existing background
     this.ctx.fillStyle = '#f8f9fa';
     this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
 
+    // Optimize drawing by reducing points
+    const skip = Math.ceil(bufferLength / this.canvas.width);
+    
     this.ctx.lineWidth = 2;
     this.ctx.strokeStyle = '#2196f3';
     this.ctx.beginPath();
 
-    const sliceWidth = this.canvas.width * 1.0 / bufferLength;
     let x = 0;
-
-    for (let i = 0; i < bufferLength; i++) {
+    for (let i = 0; i < bufferLength; i += skip) {
       const v = dataArray[i] / 128.0;
       const y = v * this.canvas.height / 2;
 
@@ -61,12 +81,12 @@ export class Visualizer {
         this.ctx.lineTo(x, y);
       }
 
-      x += sliceWidth;
+      x += (this.canvas.width / (bufferLength / skip));
     }
 
     this.ctx.lineTo(this.canvas.width, this.canvas.height / 2);
     this.ctx.stroke();
 
-    requestAnimationFrame(() => this.draw());
+    this.animationFrame = requestAnimationFrame((t) => this.draw(t));
   }
 }
